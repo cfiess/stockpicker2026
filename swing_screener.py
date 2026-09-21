@@ -26,14 +26,14 @@ from swing_config import (
     MIN_PRICE, MAX_PRICE, MIN_AVG_DOLLAR_VOLUME, MIN_ATR_PCT,
     MAX_5D_GAIN_PCT, MAX_20D_GAIN_PCT,
     MIN_RR, FRESHNESS_TRADING_DAYS, ROUTINE_ITEMS,
-    BAD_REGIME_SCORE_BUMP, MIN_SCORE, EXCLUDED_QUOTE_TYPES,
+    BAD_REGIME_SCORE_BUMP, MIN_SCORE,
 )
 from swing_data import (
     get_sec_catalysts, get_insider_buys, get_yahoo_movers,
     get_technical_signal, get_yahoo_news, analyze_with_claude,
     is_merger_target, is_near_deal_price,
     MarketRegime, TechnicalSignal,
-    EXCLUDED_NAME_RE,
+    EXCLUDED_NAME_RE, EXCLUDED_QUOTE_TYPES,
 )
 from swing_scorer import SwingCandidate
 
