@@ -1,127 +1,160 @@
 """
-Email delivery for swing trading picks.
+Plain-text email for swing trade picks.
+Formatted for easy reading at a glance.
 """
-import smtplib
 import logging
-from datetime import datetime
-from email.mime.multipart import MIMEMultipart
+import smtplib
 from email.mime.text import MIMEText
+from typing import Optional
 
-from swing_config import EMAIL_FROM, EMAIL_TO, GMAIL_APP_PASSWORD
+from swing_config import EMAIL_FROM, EMAIL_TO, GMAIL_APP_PASSWORD, MIN_SCORE
+from swing_data import MarketRegime
 from swing_scorer import SwingCandidate
 
 log = logging.getLogger(__name__)
 
-CATALYST_COLORS = {
-    "M&A": "#8B5CF6",
-    "Earnings": "#10B981",
-    "Partnership": "#3B82F6",
-    "FDA/Regulatory": "#F59E0B",
-    "Capital Return": "#06B6D4",
-    "Guidance": "#6366F1",
-    "Corporate Event": "#64748B",
-}
+_LINE = "=" * 56
+_THIN = "-" * 56
 
 
-def _card_color(catalyst: str) -> str:
-    return CATALYST_COLORS.get(catalyst, "#64748B")
+def build_email(
+    picks: list[SwingCandidate],
+    near_misses: list[SwingCandidate],
+    excluded: list[SwingCandidate],
+    regime: Optional[MarketRegime],
+    generated_at: str,
+) -> str:
+    lines: list[str] = []
 
+    lines += [
+        _LINE,
+        "  SWING TRADE PICKS",
+        f"  {generated_at}  |  Horizon: 2–14 days",
+        _LINE,
+        "",
+    ]
 
-def build_html(picks: list[SwingCandidate], generated_at: str) -> str:
-    cards = ""
-    for c in picks:
-        color = _card_color(c.sec_filing.catalyst_type if c.sec_filing else "Corporate Event")
-        tech_html = ""
-        if c.technical:
-            t = c.technical
-            trend = "↑ Above 20-MA" if t.above_ma20 else "↓ Below 20-MA"
-            tech_html = (
-                f"<p style='margin:4px 0;font-size:13px;color:#94a3b8;'>"
-                f"${t.price:.2f} | {trend} | {t.rel_volume:.1f}× vol | "
-                f"{t.momentum_5d:+.1f}% 5d | {t.sector}</p>"
-            )
-
-        insider_html = ""
-        if c.insider_buys:
-            b = c.insider_buys[0]
-            insider_html = (
-                f"<p style='margin:4px 0;font-size:13px;color:#34d399;'>"
-                f"Insider buy: {b.insider_name} — {b.shares:,} sh @ ${b.price:.2f}</p>"
-            )
-
-        thesis_html = ""
-        if c.thesis:
-            thesis_html = (
-                f"<p style='margin:6px 0;font-size:13px;color:#e2e8f0;"
-                f"border-left:3px solid {color};padding-left:8px;'>{c.thesis}</p>"
-            )
-
-        cards += f"""
-<div style="background:#1e293b;border-radius:12px;padding:20px;margin:16px 0;
-            border-left:5px solid {color};">
-  <div style="display:flex;justify-content:space-between;align-items:center;">
-    <span style="font-size:22px;font-weight:700;color:#f1f5f9;">${c.ticker}</span>
-    <span style="background:{color};color:white;padding:3px 10px;border-radius:20px;
-                 font-size:11px;font-weight:600;">#{c.rank} | Score {c.score:.1f}</span>
-  </div>
-  <p style="margin:4px 0;font-size:15px;color:#94a3b8;">{c.company}</p>
-  {tech_html}
-  {insider_html}
-  <p style="margin:4px 0;font-size:13px;color:#94a3b8;">{c.reason}</p>
-  {thesis_html}
-</div>"""
-
-    disclaimer = (
-        "<p style='font-size:11px;color:#64748b;margin-top:24px;"
-        "border-top:1px solid #334155;padding-top:12px;'>"
-        "Educational only. Not financial advice. Do your own research before trading.</p>"
-    )
-
-    return f"""<!DOCTYPE html>
-<html><body style="background:#0f172a;font-family:-apple-system,sans-serif;padding:24px;max-width:640px;margin:auto;">
-<h2 style="color:#f1f5f9;margin:0 0 4px;">🔭 Swing Trade Picks</h2>
-<p style="color:#64748b;margin:0 0 20px;font-size:13px;">2–14 day hold horizon · Generated {generated_at}</p>
-{cards}
-{disclaimer}
-</body></html>"""
-
-
-def build_plain(picks: list[SwingCandidate], generated_at: str) -> str:
-    lines = [f"SWING TRADE PICKS — {generated_at}", "=" * 50, ""]
-    for c in picks:
-        lines.append(f"#{c.rank}  ${c.ticker}  ({c.company})  Score: {c.score:.1f}")
-        if c.technical:
-            t = c.technical
-            trend = "Above" if t.above_ma20 else "Below"
-            lines.append(f"   ${t.price:.2f} | {trend} 20-MA | {t.rel_volume:.1f}× vol | {t.momentum_5d:+.1f}% 5d")
-        if c.insider_buys:
-            b = c.insider_buys[0]
-            lines.append(f"   Insider: {b.insider_name} bought {b.shares:,} @ ${b.price:.2f}")
-        lines.append(f"   {c.reason}")
-        if c.thesis:
-            lines.append(f"   Thesis: {c.thesis}")
+    # Market regime
+    if regime:
+        flag = "  *** BAD REGIME — higher bar applied ***" if regime.is_bad else ""
+        lines += [
+            "MARKET REGIME",
+            f"  {regime.label}",
+        ]
+        if flag:
+            lines.append(flag)
         lines.append("")
-    lines.append("Educational only. Not financial advice.")
+
+    # Picks
+    if not picks:
+        lines += [
+            f"NO QUALIFIED PICKS TODAY",
+            f"(minimum score {MIN_SCORE:.0f} — nothing cleared the bar)",
+            "",
+        ]
+    else:
+        for c in picks:
+            t = c.technical
+            sf = c.sec_filing
+
+            lines += [
+                _THIN,
+                f"  #{c.rank}  {c.ticker}  —  {c.company}",
+                f"  Score: {c.score:.1f}  |  {sf.catalyst_type if sf else 'Signal'}",
+            ]
+
+            if sf:
+                items_str = ", ".join(sf.items) if sf.items else "?"
+                lines.append(f"  8-K Items: {items_str}  ({sf.filed_date})")
+
+            if t:
+                lines += [
+                    "",
+                    f"  Price:   ${t.price:.2f}",
+                    f"  Stop:    ${t.stop_price:.2f}  (entry − 1.5×ATR)",
+                    f"  Target:  ${t.target_price:.2f}",
+                    f"  R:R:     {t.rr_ratio:.1f}:1",
+                    f"  ATR:     {t.atr_pct:.1f}%  |  5d: {t.momentum_5d:+.1f}%  |  20d: {t.momentum_20d:+.1f}%",
+                    f"  Volume:  {t.rel_volume:.1f}x 50-day avg",
+                    f"  MA20:    {'above' if t.above_ma20 else 'BELOW'} ({t.pct_above_ma20:+.1f}%)",
+                    f"  52w-Hi:  {t.pct_from_52w_high:+.1f}%  from ${t.high_52w:.2f}",
+                ]
+                if t.earnings_date:
+                    lines.append(f"  Earnings:{t.earnings_date}")
+
+            if c.thesis:
+                lines += ["", f"  >> {c.thesis}"]
+
+            if c.insider_buys:
+                b = c.insider_buys[0]
+                lines.append(f"  Insider: {b.insider_name} — {b.shares:,} sh @ ${b.price:.2f}")
+
+            if c.news and c.news.headlines:
+                lines += ["", "  News:"]
+                for h in c.news.headlines[:2]:
+                    lines.append(f"    • {h[:70]}")
+
+            lines.append("")
+
+    # Near-misses
+    if near_misses:
+        lines += [_THIN, "  NEAR-MISSES (scored but below threshold)", _THIN]
+        for c in near_misses:
+            t = c.technical
+            lines.append(
+                f"  {c.ticker:6s}  score {c.score:.1f}  "
+                f"{'$'+str(round(t.price,2)) if t else ''}  "
+                f"{c.sec_filing.catalyst_type if c.sec_filing else ''}"
+            )
+        lines.append("")
+
+    # Exclusion log
+    if excluded:
+        lines += [_THIN, "  EXCLUDED TODAY", _THIN]
+        for c in excluded:
+            lines.append(f"  {c.ticker:6s}  {c.exclude_reason[:60]}")
+        lines.append("")
+
+    lines += [
+        _LINE,
+        "Educational only. Not financial advice. Do your own research.",
+        _LINE,
+    ]
+
     return "\n".join(lines)
 
 
-def send_swing_email(picks: list[SwingCandidate], generated_at: str, dry_run: bool = False) -> None:
+def send_swing_email(
+    picks: list[SwingCandidate],
+    near_misses: list[SwingCandidate],
+    excluded: list[SwingCandidate],
+    regime: Optional[MarketRegime],
+    generated_at: str,
+    dry_run: bool = False,
+) -> None:
+    body = build_email(picks, near_misses, excluded, regime, generated_at)
+
     if dry_run:
-        print(build_plain(picks, generated_at))
+        print(body)
         log.info("[dry-run] email not sent")
         return
 
     if not EMAIL_FROM or not GMAIL_APP_PASSWORD:
-        log.warning("GMAIL_USER / GMAIL_APP_PASSWORD not set; skipping email")
+        log.warning("GMAIL_USER / GMAIL_APP_PASSWORD not set — skipping email")
+        print(body)
         return
 
-    subject = f"Swing Trade Picks — {generated_at}"
-    msg = MIMEMultipart("alternative")
+    n_picks = len(picks)
+    subject = (
+        f"Swing Picks — {n_picks} qualified — {generated_at}"
+        if n_picks else
+        f"Swing Picks — No candidates today — {generated_at}"
+    )
+
+    msg = MIMEText(body, "plain")
     msg["Subject"] = subject
     msg["From"] = EMAIL_FROM
     msg["To"] = EMAIL_TO
-    msg.attach(MIMEText(build_plain(picks, generated_at), "plain"))
-    msg.attach(MIMEText(build_html(picks, generated_at), "html"))
 
     try:
         with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
@@ -129,6 +162,7 @@ def send_swing_email(picks: list[SwingCandidate], generated_at: str, dry_run: bo
             smtp.starttls()
             smtp.login(EMAIL_FROM, GMAIL_APP_PASSWORD)
             smtp.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
-        log.info("Swing email sent to %s", EMAIL_TO)
+        log.info("Email sent to %s (%d picks)", EMAIL_TO, n_picks)
     except Exception as exc:
-        log.error("Failed to send email: %s", exc)
+        log.error("Email failed: %s", exc)
+        print(body)

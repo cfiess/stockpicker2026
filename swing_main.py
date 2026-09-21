@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 """
-Swing Trading Screener
-======================
-Screens for stocks with:
-  - SEC 8-K corporate catalyst (last 14 days)
-  - Insider buying (Form 4 purchases, last 14 days)
-  - Technical momentum (price above 20-MA, relative volume)
-  - News sentiment (Claude API narrative analysis when API key available)
-
-Recommended hold: 2–14 days.
-
+Swing Trading Screener  (2–14 day holds)
+========================================
 Usage:
-  python swing_main.py                # run once, send email
-  python swing_main.py --dry-run      # print to terminal only
-  python swing_main.py --picks 5      # return top 5 picks
-  python swing_main.py --schedule     # run daily at 7:30 AM ET
+  python swing_main.py              # run once, send email
+  python swing_main.py --dry-run    # print to terminal, no email
+  python swing_main.py --picks 5    # up to 5 picks
+  python swing_main.py --schedule   # run daily at 7:30 AM ET
+  python swing_main.py --verbose    # debug logging
 """
 import argparse
 import logging
@@ -30,46 +23,48 @@ log = logging.getLogger(__name__)
 
 
 def run_job(n_picks: int = 3, dry_run: bool = False) -> None:
-    from swing_screener import run_swing_screen
+    from swing_data import get_market_regime
+    from swing_screener import run_swing_screen, append_to_log
     from swing_scorer import rank_candidates
-    from swing_email import send_swing_email, build_plain
+    from swing_email import send_swing_email
 
-    log.info("Starting swing screen…")
-    candidates = run_swing_screen()
-
-    if not candidates:
-        log.warning("No candidates found.")
-        if not dry_run:
-            _send_no_picks_email()
-        return
-
-    picks = rank_candidates(candidates, n=n_picks)
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M ET")
+    run_date = datetime.now().strftime("%Y-%m-%d")
 
-    # Always print to console
-    print(build_plain(picks, generated_at))
+    log.info("=== Swing screener starting — %s ===", generated_at)
 
-    send_swing_email(picks, generated_at, dry_run=dry_run)
-    log.info("Done. %d picks delivered.", len(picks))
+    # Market regime first (fast)
+    log.info("Fetching market regime...")
+    regime = get_market_regime()
+    if regime:
+        log.info("Regime: %s", regime.label)
 
+    # Run screener (returns all candidates including excluded)
+    all_candidates = run_swing_screen(regime=regime)
 
-def _send_no_picks_email() -> None:
-    from swing_config import EMAIL_FROM, EMAIL_TO, GMAIL_APP_PASSWORD
-    import smtplib
-    from email.mime.text import MIMEText
-    if not EMAIL_FROM or not GMAIL_APP_PASSWORD:
-        return
-    msg = MIMEText("No swing trade candidates found in today's scan.")
-    msg["Subject"] = "Swing Trade Picks — No candidates today"
-    msg["From"] = EMAIL_FROM
-    msg["To"] = EMAIL_TO
-    try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
-            smtp.ehlo(); smtp.starttls()
-            smtp.login(EMAIL_FROM, GMAIL_APP_PASSWORD)
-            smtp.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
-    except Exception as exc:
-        log.error("No-picks email failed: %s", exc)
+    # Rank and separate
+    picks, near_misses = rank_candidates(all_candidates, n=n_picks)
+    excluded = [c for c in all_candidates if c.excluded]
+
+    log.info(
+        "Results: %d picks | %d near-misses | %d excluded",
+        len(picks), len(near_misses), len(excluded),
+    )
+
+    # Log to CSV (all candidates for future backtesting)
+    append_to_log(all_candidates, run_date)
+
+    # Send email
+    send_swing_email(
+        picks=picks,
+        near_misses=near_misses,
+        excluded=excluded,
+        regime=regime,
+        generated_at=generated_at,
+        dry_run=dry_run,
+    )
+
+    log.info("Done.")
 
 
 def _schedule(run_hour: int, run_minute: int, n_picks: int, dry_run: bool) -> None:
@@ -82,11 +77,8 @@ def _schedule(run_hour: int, run_minute: int, n_picks: int, dry_run: bool) -> No
         except Exception as exc:
             log.exception("Scheduled run failed: %s", exc)
 
-    schedule.every().monday.at(f"{run_hour:02d}:{run_minute:02d}").do(job)
-    schedule.every().tuesday.at(f"{run_hour:02d}:{run_minute:02d}").do(job)
-    schedule.every().wednesday.at(f"{run_hour:02d}:{run_minute:02d}").do(job)
-    schedule.every().thursday.at(f"{run_hour:02d}:{run_minute:02d}").do(job)
-    schedule.every().friday.at(f"{run_hour:02d}:{run_minute:02d}").do(job)
+    for day in ("monday", "tuesday", "wednesday", "thursday", "friday"):
+        getattr(schedule.every(), day).at(f"{run_hour:02d}:{run_minute:02d}").do(job)
 
     log.info("Scheduler armed: %02d:%02d ET weekdays", run_hour, run_minute)
     while True:
@@ -96,12 +88,12 @@ def _schedule(run_hour: int, run_minute: int, n_picks: int, dry_run: bool) -> No
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Swing trading screener")
-    parser.add_argument("--schedule", action="store_true", help="Run on daily schedule")
-    parser.add_argument("--picks", type=int, default=3, help="Number of picks to return")
-    parser.add_argument("--hour", type=int, default=7, help="Run hour (ET, 24h)")
-    parser.add_argument("--minute", type=int, default=30, help="Run minute")
-    parser.add_argument("--dry-run", action="store_true", help="Print only, no email")
-    parser.add_argument("--verbose", action="store_true", help="Debug logging")
+    parser.add_argument("--schedule", action="store_true")
+    parser.add_argument("--picks", type=int, default=3)
+    parser.add_argument("--hour", type=int, default=7)
+    parser.add_argument("--minute", type=int, default=30)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
     if args.verbose:
