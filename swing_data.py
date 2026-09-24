@@ -471,13 +471,18 @@ def get_technical_signal(ticker: str) -> Optional[TechnicalSignal]:
             pass
 
         # Stop and target
-        stop = price - ATR_STOP_MULT * atr14
-        # Target: use 52w-high or recent 60-day high if closer
-        recent_high = float(hist["High"].tail(60).max())
-        target = min(high_52w, recent_high * 1.05)  # cap at recent range
-        if target <= price:
-            target = price + 2.5 * atr14  # fallback: 2.5×ATR above price
-        rr = (target - price) / (price - stop) if (price - stop) > 0 else 0.0
+        stop = price - ATR_STOP_MULT * atr14   # 1.5×ATR below entry
+        risk = price - stop                     # = 1.5×ATR
+
+        # Target: 60-day swing high is the natural resistance level.
+        # Fall back to a theoretical 2.5:1 reward if no overhead resistance.
+        recent_high_60 = float(hist["High"].tail(60).max())
+        if recent_high_60 > price * 1.02:   # meaningful upside exists
+            target = recent_high_60
+        else:
+            target = price + 2.5 * risk     # theoretical: 2.5×risk = 2.5:1 R:R
+
+        rr = (target - price) / risk if risk > 0 else 0.0
 
         sig = TechnicalSignal(
             ticker=ticker,

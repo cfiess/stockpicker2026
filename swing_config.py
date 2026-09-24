@@ -9,8 +9,8 @@ USE_CLAUDE_API = bool(ANTHROPIC_API_KEY)
 
 # Pick count / score gate
 NUM_PICKS = 3
-MIN_SCORE = 6.0          # nothing below this makes it into picks
-NEAR_MISS_THRESHOLD = 4.0  # include in exclusion log if >= this
+MIN_SCORE = 5.0          # nothing below this makes it into picks
+NEAR_MISS_THRESHOLD = 3.5  # include in exclusion log if >= this
 
 # Lookbacks
 SEC_LOOKBACK_DAYS = 14
@@ -22,7 +22,7 @@ TECH_LOOKBACK_DAYS = 60   # enough for 50-day vol + 52w-high
 MIN_PRICE = 5.0
 MAX_PRICE = 500.0
 MIN_AVG_DOLLAR_VOLUME = 5_000_000   # $5M/day
-MIN_ATR_PCT = 2.0                    # ATR(14)/price must be >= 2%
+MIN_ATR_PCT = 1.5                    # ATR(14)/price must be >= 1.5%
 
 # Already-moved hard exclusions
 MAX_5D_GAIN_PCT = 15.0
@@ -30,7 +30,7 @@ MAX_20D_GAIN_PCT = 25.0
 PCT_FROM_52W_HIGH_MAX = -2.0         # exclude if within 2% of 52w high (too extended)
 
 # Risk/reward
-MIN_RR = 2.0             # stop = price - 1.5×ATR; require (target-price)/(price-stop) >= 2
+MIN_RR = 1.5             # stop = price - 1.5×ATR; require (target-price)/(price-stop) >= 1.5
 ATR_STOP_MULT = 1.5
 
 # Market regime
